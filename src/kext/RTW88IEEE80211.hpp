@@ -44,6 +44,11 @@ struct RTW88BSS {
     uint32_t group_cipher; /* selected group WLAN_CIPHER_SUITE_* */
     uint32_t akm;
     uint32_t last_seen_scan;
+    /* --- Stage 1: HT capability captured from AP beacon/probe-resp --- */
+    bool     ht_supported;      /* AP advertised HT Capabilities (EID 45) */
+    uint16_t ht_cap_info;       /* HT Capabilities Info field (u16, LE)   */
+    uint8_t  ht_ampdu_params;   /* A-MPDU Parameters byte                 */
+    uint8_t  ht_mcs_set[16];    /* Supported MCS Set (16 bytes)           */
     /* Raw IE data for association */
     uint8_t  ies[512];
     uint16_t ies_len;

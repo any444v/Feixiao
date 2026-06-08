@@ -1141,6 +1141,16 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
             bss->channel = body[2];
         } else if (id == WLAN_EID_HT_OPERATION && len >= 1 && bss->channel == 0) {
             bss->channel = body[2];
+        } else if (id == WLAN_EID_HT_CAPABILITY && len >= 26) {
+            /* HT Capabilities element body layout (802.11):
+             *   [0..1]  HT Capabilities Info (u16, LE)
+             *   [2]     A-MPDU Parameters
+             *   [3..18] Supported MCS Set (16 bytes)
+             * body[0]=EID, body[1]=len, so the body data starts at body[2]. */
+            bss->ht_supported    = true;
+            bss->ht_cap_info     = (uint16_t)(body[2] | (body[3] << 8));
+            bss->ht_ampdu_params = body[4];
+            memcpy(bss->ht_mcs_set, body + 5, 16);
         } else if (id == WLAN_EID_RSN) {
             uint32_t pairwise = 0;
             uint32_t group = 0;
@@ -1183,6 +1193,12 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
         else if (f >= 5000 && f <= 5900)
             bss->channel = (f - 5000) / 5;
     }
+
+#if RTW88_STAGE1_HT
+    IOLog("rtw88: scan: %s ch=%u ht=%d cap=0x%04x ampdu=0x%02x mcs0=0x%02x mcs1=0x%02x\n",
+          bss->ssid, bss->channel, bss->ht_supported, bss->ht_cap_info,
+          bss->ht_ampdu_params, bss->ht_mcs_set[0], bss->ht_mcs_set[1]);
+#endif
 
     /* Add to BSS list (deduplicate by BSSID) */
     IOLockLock(_bssLock);
@@ -1795,7 +1811,30 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
              * data rates the AP has not accepted for this association. */
             _sta->deflink.supp_rates[NL80211_BAND_2GHZ] = 0xFFF; /* CCK+OFDM */
             _sta->deflink.supp_rates[NL80211_BAND_5GHZ] = 0xFF;  /* OFDM     */
-            _sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;
+            _sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;    /* Stage 1: 20MHz */
+
+#if RTW88_STAGE1_HT
+            /* Advertise HT to rtw88's rate adaptation, consistent with the HT
+             * Cap IE we put in the assoc request.  rtw_update_sta_info() (called
+             * from sta_add below) reads sta->deflink.ht_cap to build the rate
+             * mask, so this MUST run before sta_add(). */
+            if (_targetBSS.ht_supported) {
+                struct ieee80211_sta_ht_cap *ht = &_sta->deflink.ht_cap;
+                ht->ht_supported  = true;
+                ht->cap           = IEEE80211_HT_CAP_SGI_20;  /* match assoc IE */
+                ht->ampdu_factor  = IEEE80211_HT_MAX_AMPDU_64K; /* 3, == IE A-MPDU exp */
+                ht->ampdu_density = 0;
+                memset(ht->mcs.rx_mask, 0, sizeof(ht->mcs.rx_mask));
+                ht->mcs.rx_mask[0] = 0xFF;  /* MCS 0-7  */
+                ht->mcs.rx_mask[1] = 0xFF;  /* MCS 8-15 */
+                ht->mcs.rx_highest = 0;
+                ht->mcs.tx_params  = IEEE80211_HT_MCS_TX_DEFINED;
+                IOLog("rtw88: assoc: STA HT enabled (20MHz 2x2), cap=0x%04x\n",
+                      ht->cap);
+            } else {
+                IOLog("rtw88: assoc: AP not HT-capable — legacy STA\n");
+            }
+#endif
 
             _hw->ops->sta_add(_hw, _vif, _sta);
         }
@@ -1913,6 +1952,38 @@ bool RTW88IEEE80211::buildAssocReq(uint8_t *buf, uint32_t *len)
     };
     memcpy(body, wme_info, sizeof(wme_info));
     body += sizeof(wme_info);
+
+#if RTW88_STAGE1_HT
+    /* HT Capabilities IE (EID 45) — only if the AP advertised HT.  Stage 1 is a
+     * deliberately conservative 20MHz-only, 2x2 (MCS 0-15), SGI-20 config: NO
+     * 20/40 wide channel, no LDPC/STBC/greenfield.  These bytes MUST stay in
+     * sync with the _sta->deflink.ht_cap we hand to sta_add() in the assoc-resp
+     * handler, or the AP and firmware will disagree on the rate set. */
+    if (_targetBSS.ht_supported) {
+        uint8_t *ht = body;
+        ht[0] = WLAN_EID_HT_CAPABILITY;   /* 45 */
+        ht[1] = 26;                        /* fixed HT Cap element body length */
+
+        /* HT Capabilities Info (u16, LE): SGI-20 only. */
+        uint16_t htcap = IEEE80211_HT_CAP_SGI_20;   /* 0x0020 */
+        ht[2] = (uint8_t)(htcap & 0xff);
+        ht[3] = (uint8_t)(htcap >> 8);
+
+        /* A-MPDU Parameters: max-len exponent = 3 (64KB), no density limit. */
+        ht[4] = 0x03;
+
+        /* Supported MCS Set (16 bytes): 2 spatial streams = MCS 0-15. */
+        memset(ht + 5, 0, 16);
+        ht[5] = 0xFF;   /* rx_mask MCS 0-7  (stream 1) */
+        ht[6] = 0xFF;   /* rx_mask MCS 8-15 (stream 2) */
+
+        /* HT Extended Cap (2) + TX Beamforming (4) + ASEL (1) = 7 bytes, all 0. */
+        memset(ht + 21, 0, 7);
+
+        body += 2 + 26;   /* 28 bytes total */
+        IOLog("rtw88: assoc: appended HT Cap IE (20MHz, 2x2 MCS0-15)\n");
+    }
+#endif
 
     /* Advertise the cipher choice we actually implement: pairwise CCMP/AES
      * with the AP's selected group cipher.  Mixed TKIP+AES APs often list

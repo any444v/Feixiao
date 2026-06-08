@@ -63,7 +63,8 @@ KEXT_FLAGS   := -fno-exceptions -fno-rtti \
 COMPAT_FLAGS := \
     -I$(COMPAT_DIR) \
     -I$(COMPAT_DIR)/linux \
-    -I$(PROJ_ROOT)/src/kext
+    -I$(PROJ_ROOT)/src/kext \
+    -DRTW88_STAGE1_HT=1
 
 # C flags for Linux driver files
 DRIVER_CFLAGS := \

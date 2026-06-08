@@ -1192,8 +1192,17 @@ void rtw88_connect_hw_setup(struct ieee80211_hw *hw,
      */
     if (hw->conf.chandef.chan &&
         hw->conf.chandef.chan->band == NL80211_BAND_5GHZ) {
+#if RTW88_STAGE1_HT
+        /* Stage 1: let the firmware's rate adaptation climb on 5GHz.  The 6M
+         * pin was a stability hack from before RF calibration (rtw_chip_prepare_tx,
+         * above) was wired in; with calibration running the adaptive path should
+         * be stable.  Revert by clearing -DRTW88_STAGE1_HT. */
+        rtwdev->dm_info.fix_rate = 0xFF;          /* adaptive */
+        IOLog("rtw88: connect_hw_setup: 5GHz adaptive rate (Stage1)\n");
+#else
         rtwdev->dm_info.fix_rate = DESC_RATE6M;   /* 6 Mbps OFDM, use_rate */
         IOLog("rtw88: connect_hw_setup: 5GHz — pinning data TX to 6M OFDM\n");
+#endif
     } else {
         rtwdev->dm_info.fix_rate = 0xFF;          /* U8_MAX = adaptive */
     }
@@ -1223,7 +1232,14 @@ void rtw88_restore_connected_hw(struct ieee80211_hw *hw,
 
     if (hw->conf.chandef.chan &&
         hw->conf.chandef.chan->band == NL80211_BAND_5GHZ) {
+#if RTW88_STAGE1_HT
+        /* Keep 5GHz adaptive on the restore path too — otherwise a scan while
+         * connected re-pins TX to 6M and silently undoes the Stage 1 win. */
+        rtwdev->dm_info.fix_rate = 0xFF;
+        IOLog("rtw88: restore_connected_hw: 5GHz adaptive rate (Stage1)\n");
+#else
         rtwdev->dm_info.fix_rate = DESC_RATE6M;
+#endif
     } else {
         rtwdev->dm_info.fix_rate = 0xFF;
     }

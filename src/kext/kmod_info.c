@@ -13,7 +13,11 @@
 extern kern_return_t _start(kmod_info_t *, void *);
 extern kern_return_t _stop(kmod_info_t *, void *);
 
+#ifdef RTW89_MACOS
+KMOD_EXPLICIT_DECL(com.rtw89.driver, "1.1.0", _start, _stop)
+#else
 KMOD_EXPLICIT_DECL(com.rtw88.driver, "1.1.0", _start, _stop)
+#endif
 
 extern int  rtw88_compat_init(void);
 extern void rtw88_compat_exit(void);

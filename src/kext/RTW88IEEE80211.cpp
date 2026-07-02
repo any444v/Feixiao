@@ -36,12 +36,14 @@ void rtw_pci_remove(struct pci_dev *pdev);
 void rtw88_set_hw_callbacks(struct rtw88_hw_callbacks *cbs, void *kext_hw);
 
 /* chip hw_spec structs — driver_data for rtw_pci_probe */
+#ifndef RTW89_MACOS
 extern const struct rtw_chip_info rtw8822b_hw_spec;
 extern const struct rtw_chip_info rtw8822c_hw_spec;
 extern const struct rtw_chip_info rtw8821c_hw_spec;
 extern const struct rtw_chip_info rtw8821a_hw_spec;
 extern const struct rtw_chip_info rtw8812a_hw_spec;
 extern const struct rtw_chip_info rtw8814a_hw_spec;
+#endif
 
 } /* extern "C" */
 
@@ -482,6 +484,24 @@ struct rtw88_pci_id_entry {
     const struct rtw_chip_info *chip;
 };
 
+#ifdef RTW89_MACOS
+/* rtw89: chip lookup happens inside the driver bridge (feixiao.c),
+ * which matches the real per-chip id tables; this kext-side table only
+ * gates known PCI device ids, so the chip pointer is a dummy tag. */
+#define RTW89_CHIP_TAG ((const struct rtw_chip_info *)1)
+static const struct rtw88_pci_id_entry rtw88_pci_chip_table[] = {
+    { 0xB851, RTW89_CHIP_TAG },  /* RTL8851BE */
+    { 0x8852, RTW89_CHIP_TAG },  /* RTL8852AE */
+    { 0xA85A, RTW89_CHIP_TAG },  /* RTL8852AE variant */
+    { 0xB852, RTW89_CHIP_TAG },  /* RTL8852BE */
+    { 0xB85B, RTW89_CHIP_TAG },  /* RTL8852BE variant */
+    { 0xB520, RTW89_CHIP_TAG },  /* RTL8852BTE */
+    { 0xC852, RTW89_CHIP_TAG },  /* RTL8852CE */
+    { 0x8922, RTW89_CHIP_TAG },  /* RTL8922AE */
+    { 0x892B, RTW89_CHIP_TAG },  /* RTL8922AE variant */
+    { 0, nullptr }
+};
+#else
 static const struct rtw88_pci_id_entry rtw88_pci_chip_table[] = {
     { 0xB822, &rtw8822b_hw_spec },  /* RTL8822BE */
     { 0xC822, &rtw8822c_hw_spec },  /* RTL8822CE */
@@ -493,6 +513,7 @@ static const struct rtw88_pci_id_entry rtw88_pci_chip_table[] = {
     { 0x8813, &rtw8814a_hw_spec },  /* RTL8814AE */
     { 0, nullptr }
 };
+#endif
 
 /* Forward declaration of hw_callbacks struct from compat.c */
 struct rtw88_hw_callbacks {
@@ -502,7 +523,12 @@ struct rtw88_hw_callbacks {
 };
 
 #define super OSObject
-OSDefineMetaClassAndStructors(RTW88IEEE80211, OSObject)
+/* One extra macro-expansion level so a -DRTW88Foo=RTW89Foo class rename
+ * (rtw89 kext build) also renames the OSMetaClass name string:
+ * arguments used plainly in a macro body are expanded before being
+ * passed to OSDefineMetaClassAndStructors' internal stringify. */
+#define RTW_DEFINE_METACLASS(cls, super) OSDefineMetaClassAndStructors(cls, super)
+RTW_DEFINE_METACLASS(RTW88IEEE80211, OSObject)
 
 /* ------------------------------------------------------------------ */
 /*  Static compat callbacks                                             */

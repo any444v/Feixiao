@@ -5,7 +5,12 @@
 #include <IOKit/IOLib.h>
 
 #define super IOService
-OSDefineMetaClassAndStructors(RTW88Kext, IOService)
+/* One extra macro-expansion level so a -DRTW88Foo=RTW89Foo class rename
+ * (rtw89 kext build) also renames the OSMetaClass name string:
+ * arguments used plainly in a macro body are expanded before being
+ * passed to OSDefineMetaClassAndStructors' internal stringify. */
+#define RTW_DEFINE_METACLASS(cls, super) OSDefineMetaClassAndStructors(cls, super)
+RTW_DEFINE_METACLASS(RTW88Kext, IOService)
 
 bool RTW88Kext::init(OSDictionary *props)
 {

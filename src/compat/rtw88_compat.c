@@ -942,6 +942,11 @@ void rtw88_compat_exit(void)
 /*  Driver Info Helpers                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Everything below reaches into rtw88 driver internals (main.h etc.).
+ * For the rtw89 build these helpers are implemented by the driver-side
+ * bridge (rtw89's feixiao.c) instead. */
+#if !defined(RTW89_MACOS)
+
 #include "main.h"
 #include "fw.h"
 #include "reg.h"
@@ -1258,6 +1263,8 @@ void rtw88_get_stats(struct rtw_dev *rtwdev, uint32_t *tx_bytes, uint32_t *rx_by
     if (tx_bytes) *tx_bytes = (uint32_t)rtwdev->stats.tx_unicast;
     if (rx_bytes) *rx_bytes = (uint32_t)rtwdev->stats.rx_unicast;
 }
+
+#endif /* !RTW89_MACOS */
 
 uint32_t rtw88_read_log(char *out_buf, uint32_t max_len)
 {

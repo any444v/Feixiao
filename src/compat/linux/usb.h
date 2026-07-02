@@ -161,6 +161,7 @@ static inline unsigned int usb_rcvctrlpipe(struct usb_device *dev, unsigned int 
 #define URB_NO_TRANSFER_DMA_MAP     (1 << 2)
 
 struct urb;
+struct usb_anchor;
 typedef void (*usb_complete_t)(struct urb *);
 
 struct urb {
@@ -175,6 +176,9 @@ struct urb {
     u32  transfer_flags;
     int  start_frame;
     int  error_count;
+    /* rtw89 anchors (see rtw89_compat.c) */
+    struct list_head anchor_list;
+    struct usb_anchor *anchor;
 };
 
 static inline struct urb *usb_alloc_urb(int iso_packets, gfp_t mem_flags)

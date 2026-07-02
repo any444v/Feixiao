@@ -3,7 +3,11 @@ build/
 *.o
 *.a
 firmware/*.bin
+firmware89/*.bin
 rtw88.kext/Contents/Resources/*.bin
 rtw88.kext/Contents/MacOS/
+rtw89.kext/Contents/Resources/*.bin
+rtw89.kext/Contents/MacOS/
 src/compat/fw_blobs.c
+src/compat/fw_blobs89.c
 *.log

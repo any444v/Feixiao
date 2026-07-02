@@ -22,6 +22,7 @@ MAKEFLAGS += -j$(shell sysctl -n hw.logicalcpu)
 
 PROJ_ROOT    := $(shell pwd)
 LINUX_SRC    := $(PROJ_ROOT)/../rtw88-stable/drivers/net/wireless/realtek/rtw88
+LINUX89_SRC  := $(PROJ_ROOT)/../rtw89-stable/drivers/net/wireless/realtek/rtw89
 COMPAT_DIR   := $(PROJ_ROOT)/src/compat
 KEXT_SRC     := $(PROJ_ROOT)/src/kext
 FIRMWARE_DIR := $(PROJ_ROOT)/firmware
@@ -36,6 +37,11 @@ KEXT_SKEL    := $(PROJ_ROOT)/rtw88.kext
 # Output bundle: fully assembled kext ready for OpenCore / kextutil
 OUT_KEXT     := $(OUT_DIR)/rtw88.kext
 OUT_KEXT_BIN := $(OUT_KEXT)/Contents/MacOS/rtw88
+
+# rtw89 flavour (separate kext, same kext sources via class renames)
+KEXT89_SKEL    := $(PROJ_ROOT)/rtw89.kext
+OUT_KEXT89     := $(OUT_DIR)/rtw89.kext
+OUT_KEXT89_BIN := $(OUT_KEXT89)/Contents/MacOS/rtw89
 OUT_CTL      := $(OUT_DIR)/rtw88ctl
 
 # ------------------------------------------------------------------ #
@@ -88,6 +94,22 @@ DRIVER_CFLAGS := \
     -Wno-unused-variable \
     -Wno-unused-function
 
+# rtw89 driver flags — force-include rtw89_compat.h (which pulls in
+# rtw88_compat.h first) and define RTW89_MACOS instead of RTW88_MACOS
+DRIVER89_CFLAGS := \
+    $(KEXT_FLAGS) \
+    $(COMPAT_FLAGS) \
+    -include \
+    $(COMPAT_DIR)/rtw89_compat.h \
+    -I$(LINUX89_SRC) \
+    -DRTW89_MACOS=1 \
+    -D__KERNEL__ \
+    -Wno-implicit-function-declaration \
+    -Wno-int-conversion \
+    -Wno-incompatible-pointer-types \
+    -Wno-unused-variable \
+    -Wno-unused-function
+
 # C++ flags for kext wrapper files (-fapple-kext only for C++)
 KEXT_CXXFLAGS := \
     $(KEXT_FLAGS) \
@@ -97,6 +119,16 @@ KEXT_CXXFLAGS := \
     -DKERNEL \
     -Wno-deprecated-declarations \
     -Wno-nullability-completeness
+
+# rtw89 kext C++ flags — same sources, classes renamed so both kexts can
+# coexist without OSMetaClass name collisions
+KEXT89_CXXFLAGS := \
+    $(KEXT_CXXFLAGS) \
+    -DRTW89_MACOS=1 \
+    -DRTW88Kext=RTW89Kext \
+    -DRTW88PCIDevice=RTW89PCIDevice \
+    -DRTW88IEEE80211=RTW89IEEE80211 \
+    -DRTW88UserClient=RTW89UserClient
 
 # ------------------------------------------------------------------ #
 # Source files                                                         #
@@ -149,9 +181,74 @@ CHIP_SRCS := \
     $(LINUX_SRC)/rtw8821au.c \
     $(LINUX_SRC)/rtw88xxa.c
 
+# rtw89 driver + chip sources (debug.c and wow.c excluded, as on Linux
+# when CONFIG_RTW89_DEBUG*/CONFIG_PM are off)
+DRIVER89_SRCS := \
+    $(LINUX89_SRC)/core.c \
+    $(LINUX89_SRC)/mac80211.c \
+    $(LINUX89_SRC)/mac.c \
+    $(LINUX89_SRC)/mac_be.c \
+    $(LINUX89_SRC)/phy.c \
+    $(LINUX89_SRC)/phy_be.c \
+    $(LINUX89_SRC)/fw.c \
+    $(LINUX89_SRC)/cam.c \
+    $(LINUX89_SRC)/efuse.c \
+    $(LINUX89_SRC)/efuse_be.c \
+    $(LINUX89_SRC)/regd.c \
+    $(LINUX89_SRC)/sar.c \
+    $(LINUX89_SRC)/coex.c \
+    $(LINUX89_SRC)/ps.c \
+    $(LINUX89_SRC)/chan.c \
+    $(LINUX89_SRC)/ser.c \
+    $(LINUX89_SRC)/acpi.c \
+    $(LINUX89_SRC)/util.c \
+    $(LINUX89_SRC)/pci.c \
+    $(LINUX89_SRC)/pci_be.c \
+    $(LINUX89_SRC)/usb.c \
+    $(LINUX89_SRC)/feixiao.c
+
+CHIP89_SRCS := \
+    $(LINUX89_SRC)/rtw8851b.c \
+    $(LINUX89_SRC)/rtw8851b_rfk.c \
+    $(LINUX89_SRC)/rtw8851b_rfk_table.c \
+    $(LINUX89_SRC)/rtw8851b_table.c \
+    $(LINUX89_SRC)/rtw8851be.c \
+    $(LINUX89_SRC)/rtw8851bu.c \
+    $(LINUX89_SRC)/rtw8852a.c \
+    $(LINUX89_SRC)/rtw8852a_rfk.c \
+    $(LINUX89_SRC)/rtw8852a_rfk_table.c \
+    $(LINUX89_SRC)/rtw8852a_table.c \
+    $(LINUX89_SRC)/rtw8852ae.c \
+    $(LINUX89_SRC)/rtw8852au.c \
+    $(LINUX89_SRC)/rtw8852b.c \
+    $(LINUX89_SRC)/rtw8852b_common.c \
+    $(LINUX89_SRC)/rtw8852b_rfk.c \
+    $(LINUX89_SRC)/rtw8852b_rfk_table.c \
+    $(LINUX89_SRC)/rtw8852b_table.c \
+    $(LINUX89_SRC)/rtw8852be.c \
+    $(LINUX89_SRC)/rtw8852bu.c \
+    $(LINUX89_SRC)/rtw8852bt.c \
+    $(LINUX89_SRC)/rtw8852bt_rfk.c \
+    $(LINUX89_SRC)/rtw8852bt_rfk_table.c \
+    $(LINUX89_SRC)/rtw8852bte.c \
+    $(LINUX89_SRC)/rtw8852c.c \
+    $(LINUX89_SRC)/rtw8852c_rfk.c \
+    $(LINUX89_SRC)/rtw8852c_rfk_table.c \
+    $(LINUX89_SRC)/rtw8852c_table.c \
+    $(LINUX89_SRC)/rtw8852ce.c \
+    $(LINUX89_SRC)/rtw8852cu.c \
+    $(LINUX89_SRC)/rtw8922a.c \
+    $(LINUX89_SRC)/rtw8922a_rfk.c \
+    $(LINUX89_SRC)/rtw8922ae.c
+
+
 # Compat C implementation
 COMPAT_SRCS := \
     $(COMPAT_DIR)/rtw88_compat.c
+
+COMPAT89_SRCS := \
+    $(COMPAT_DIR)/rtw88_compat.c \
+    $(COMPAT_DIR)/rtw89_compat.c
 
 # Firmware loader — compiled with system headers only (no Linux compat headers)
 # fw_blobs.c is auto-generated from firmware/*.bin before compilation
@@ -186,6 +283,16 @@ KEXT_OBJS   := $(patsubst $(KEXT_SRC)/%.cpp, $(BUILD_DIR)/kext/%.o,   $(KEXT_SRC
 
 ALL_OBJS    := $(DRIVER_OBJS) $(CHIP_OBJS) $(COMPAT_OBJS) $(FIRMWARE_OBJS) $(KMOD_OBJS) $(KEXT_OBJS)
 
+# rtw89 objects — separate build dirs so both kexts can be built side by side
+DRIVER89_OBJS   := $(patsubst $(LINUX89_SRC)/%.c,  $(BUILD_DIR)/driver89/%.o, $(DRIVER89_SRCS))
+CHIP89_OBJS     := $(patsubst $(LINUX89_SRC)/%.c,  $(BUILD_DIR)/driver89/%.o, $(CHIP89_SRCS))
+COMPAT89_OBJS   := $(patsubst $(COMPAT_DIR)/%.c, $(BUILD_DIR)/compat89/%.o, $(COMPAT89_SRCS))
+FIRMWARE89_OBJS := $(BUILD_DIR)/compat89/rtw88_firmware.o $(BUILD_DIR)/compat89/fw_blobs89.o
+KMOD89_OBJS     := $(BUILD_DIR)/kext89/kmod_info.o
+KEXT89_OBJS     := $(patsubst $(KEXT_SRC)/%.cpp, $(BUILD_DIR)/kext89/%.o, $(KEXT_SRCS))
+
+ALL89_OBJS := $(DRIVER89_OBJS) $(CHIP89_OBJS) $(COMPAT89_OBJS) $(FIRMWARE89_OBJS) $(KMOD89_OBJS) $(KEXT89_OBJS)
+
 # ------------------------------------------------------------------ #
 # Linker flags                                                         #
 # ------------------------------------------------------------------ #
@@ -203,9 +310,11 @@ KEXT_LDFLAGS := \
 # Targets                                                             #
 # ------------------------------------------------------------------ #
 
-.PHONY: all kext ctl install load unload clean
+.PHONY: all kext kext89 ctl install load unload clean
 
 all: kext ctl
+
+kext89: $(OUT_KEXT89_BIN)
 
 kext: $(OUT_KEXT_BIN)
 
@@ -219,6 +328,15 @@ $(OUT_KEXT_BIN): $(ALL_OBJS) | $(OUT_KEXT)/Contents/MacOS
 	@echo "  KEXT $$(dwarfdump --uuid $(OUT_KEXT_BIN) 2>/dev/null)"
 	@echo "  OK   build/out/rtw88.kext"
 
+# rtw89 kext link + bundle assembly
+$(OUT_KEXT89_BIN): $(ALL89_OBJS) | $(OUT_KEXT89)/Contents/MacOS
+	@echo "  LD   $(notdir $@)"
+	$(LD) $(KEXT_LDFLAGS) -o $@ $(ALL89_OBJS)
+	@echo "  SYNC $(OUT_KEXT89)"
+	rsync -a --exclude='MacOS' $(KEXT89_SKEL)/ $(OUT_KEXT89)/
+	@echo "  NOTE  run 'sudo chown -R root:wheel $(OUT_KEXT89)' for kextutil"
+	@echo "  OK   build/out/rtw89.kext"
+
 # Compile Linux driver C files with compat headers
 $(BUILD_DIR)/driver/%.o: $(LINUX_SRC)/%.c | $(BUILD_DIR)/driver
 	@echo "  CC   $(notdir $<)"
@@ -228,6 +346,15 @@ $(BUILD_DIR)/driver/%.o: $(LINUX_SRC)/%.c | $(BUILD_DIR)/driver
 $(BUILD_DIR)/compat/%.o: $(COMPAT_DIR)/%.c | $(BUILD_DIR)/compat
 	@echo "  CC   $(notdir $<)"
 	$(CC) $(DRIVER_CFLAGS) -c $< -o $@
+
+# rtw89: compile Linux driver / compat C files
+$(BUILD_DIR)/driver89/%.o: $(LINUX89_SRC)/%.c | $(BUILD_DIR)/driver89
+	@echo "  CC89 $(notdir $<)"
+	$(CC) $(DRIVER89_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/compat89/%.o: $(COMPAT_DIR)/%.c | $(BUILD_DIR)/compat89
+	@echo "  CC89 $(notdir $<)"
+	$(CC) $(DRIVER89_CFLAGS) -c $< -o $@
 
 # Generate fw_blobs.c from firmware/*.bin (zlib-compressed embedded blobs)
 $(FW_BLOBS_C): $(wildcard $(FIRMWARE_DIR)/*.bin) scripts/gen_fw_blobs.py
@@ -249,6 +376,22 @@ $(BUILD_DIR)/compat/fw_blobs.o: $(COMPAT_DIR)/fw_blobs.c | $(BUILD_DIR)/compat
 	@echo "  CC   fw_blobs.c"
 	$(CC) $(FW_CFLAGS) -c $< -o $@
 
+# rtw89 firmware: blobs generated from firmware89/*.bin (linux-firmware rtw89/)
+FIRMWARE89_DIR := $(PROJ_ROOT)/firmware89
+FW_BLOBS89_C   := $(COMPAT_DIR)/fw_blobs89.c
+
+$(FW_BLOBS89_C): $(wildcard $(FIRMWARE89_DIR)/*.bin) scripts/gen_fw_blobs.py
+	@echo "  GEN  fw_blobs89.c"
+	python3 $(PROJ_ROOT)/scripts/gen_fw_blobs.py $(FIRMWARE89_DIR) $@
+
+$(BUILD_DIR)/compat89/rtw88_firmware.o: $(COMPAT_DIR)/rtw88_firmware.c | $(BUILD_DIR)/compat89
+	@echo "  CC89 rtw88_firmware.c"
+	$(CC) $(FW_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/compat89/fw_blobs89.o: $(FW_BLOBS89_C) | $(BUILD_DIR)/compat89
+	@echo "  CC89 fw_blobs89.c"
+	$(CC) $(FW_CFLAGS) -c $< -o $@
+
 # Compile kmod_info.c (plain C, no compat headers)
 $(BUILD_DIR)/kext/kmod_info.o: $(KEXT_SRC)/kmod_info.c | $(BUILD_DIR)/kext
 	@echo "  CC   kmod_info.c"
@@ -258,6 +401,15 @@ $(BUILD_DIR)/kext/kmod_info.o: $(KEXT_SRC)/kmod_info.c | $(BUILD_DIR)/kext
 $(BUILD_DIR)/kext/%.o: $(KEXT_SRC)/%.cpp | $(BUILD_DIR)/kext
 	@echo "  CXX  $(notdir $<)"
 	$(CXX) $(KEXT_CXXFLAGS) -c $< -o $@
+
+# rtw89: kmod_info + kext C++ (renamed classes)
+$(BUILD_DIR)/kext89/kmod_info.o: $(KEXT_SRC)/kmod_info.c | $(BUILD_DIR)/kext89
+	@echo "  CC89 kmod_info.c"
+	$(CC) $(KEXT_FLAGS) -DRTW89_MACOS=1 -c $< -o $@
+
+$(BUILD_DIR)/kext89/%.o: $(KEXT_SRC)/%.cpp | $(BUILD_DIR)/kext89
+	@echo "  CXX89 $(notdir $<)"
+	$(CXX) $(KEXT89_CXXFLAGS) -c $< -o $@
 
 # ctl binary
 ctl: $(OUT_CTL)
@@ -284,6 +436,12 @@ $(BUILD_DIR)/compat:
 $(BUILD_DIR)/kext:
 	mkdir -p $@
 
+$(BUILD_DIR)/driver89 $(BUILD_DIR)/compat89 $(BUILD_DIR)/kext89:
+	mkdir -p $@
+
+$(OUT_KEXT89)/Contents/MacOS:
+	mkdir -p $@
+
 $(OUT_DIR):
 	mkdir -p $@
 
@@ -295,6 +453,8 @@ $(OUT_KEXT)/Contents/MacOS:
 # ------------------------------------------------------------------ #
 
 install: kext ctl
+
+kext89: $(OUT_KEXT89_BIN)
 	@echo "Installing rtw88.kext to /Library/Extensions..."
 	sudo cp -R $(OUT_KEXT) /Library/Extensions/
 	sudo chown -R root:wheel /Library/Extensions/rtw88.kext

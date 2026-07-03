@@ -6,9 +6,9 @@ These are NOT included in the repo (licensing). Obtain from:
 Files needed (copy all that apply to your chip):
   rtw8851b_fw.bin   — RTL8851BE
   rtw8852a_fw.bin   — RTL8852AE
-  rtw8852b_fw.bin   — RTL8852BE (or rtw8852b_fw-1.bin, renamed)
+  rtw8852b_fw-1.bin — RTL8852BE (driver asks -1 format first; plain rtw8852b_fw.bin is fallback)
   rtw8852bt_fw.bin  — RTL8852BTE
-  rtw8852c_fw.bin   — RTL8852CE (or rtw8852c_fw-1.bin, renamed)
+  rtw8852c_fw-1.bin — RTL8852CE (same: -1 first, plain fallback)
   rtw8922a_fw.bin   — RTL8922AE
 
 The Makefile embeds them (zlib-compressed) via scripts/gen_fw_blobs.py into

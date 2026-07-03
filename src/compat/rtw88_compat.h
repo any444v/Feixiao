@@ -10,7 +10,16 @@
 #ifndef __nonstring
 #define __nonstring
 #endif
-/* __cold and __pure may be defined by sys/cdefs.h — guard and redefine */
+
+/* Pull in all compat headers in dependency order */
+#include "iokit_shim.h"
+
+/* Attribute macros must be defined AFTER iokit_shim.h: the real macOS SDK
+ * (os/base.h) probes `__has_attribute(fallthrough)`, and a pre-existing
+ * `fallthrough` object macro expands inside that probe and breaks the parse.
+ * sys/cdefs.h also owns __cold/__pure — undef its versions and use Linux
+ * semantics for driver code from here on.
+ */
 #ifdef __cold
 #undef __cold
 #endif
@@ -26,9 +35,6 @@
 #define fallthrough do {} while (0)
 #endif
 #endif
-
-/* Pull in all compat headers in dependency order */
-#include "iokit_shim.h"
 #include "linux/types.h"
 #include "linux/device.h"
 #include "linux/bitops.h"

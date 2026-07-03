@@ -18,6 +18,13 @@ extern "C" {
 extern "C" void rtw88_trigger_interrupt(void);
 extern "C" boolean_t preemption_enabled(void);
 
+/* Driver family name shown in ioreg properties */
+#ifdef RTW89_MACOS
+#define RTW_DRV_NAME "rtw89"
+#else
+#define RTW_DRV_NAME "rtw88"
+#endif
+
 #define super IOEthernetController
 /* One extra macro-expansion level so a -DRTW88Foo=RTW89Foo class rename
  * (rtw89 kext build) also renames the OSMetaClass name string:
@@ -231,7 +238,7 @@ void RTW88PCIDevice::publishHardwareIdentity()
     setName(chip);
     setProperty(kIOVendor, "Realtek");
     setProperty(kIOModel, chip);
-    setProperty(kIORevision, "rtw88");
+    setProperty(kIORevision, RTW_DRV_NAME);
     setProperty(kIOBuiltin, kOSBooleanTrue);
     setProperty(kIOLocation, "Internal");
     setProperty("IOUserVisibleName", chip);
@@ -253,7 +260,7 @@ void RTW88PCIDevice::publishHardwareIdentity()
         _iface->setName(chip);
         _iface->setProperty(kIOVendor, "Realtek");
         _iface->setProperty(kIOModel, chip);
-        _iface->setProperty(kIORevision, "rtw88");
+        _iface->setProperty(kIORevision, RTW_DRV_NAME);
         _iface->setProperty(kIOBuiltin, kOSBooleanTrue);
         _iface->setProperty(kIOPrimaryInterface, kOSBooleanTrue);
         _iface->setProperty(kIOLocation, "Internal");

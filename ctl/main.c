@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-// rtw88ctl — userspace control binary for rtw88 macOS kext
+// rtw88ctl — userspace control binary for rtw88/rtw89 macOS kexts
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,18 +67,28 @@ static const char *state_name(uint32_t s)
 /* ------------------------------------------------------------------ */
 static io_connect_t open_kext(void)
 {
-    /* IOServiceMatching finds the instantiated C++ IOService object */
-    CFMutableDictionaryRef matching = IOServiceMatching("RTW88PCIDevice");
-    if (!matching) {
-        fprintf(stderr, "rtw88ctl: failed to create matching dict\n");
-        return MACH_PORT_NULL;
-    }
+    /* rtw88.kext and rtw89.kext compile the same user-client source, so
+     * the control protocol is identical; only the IOService class name
+     * differs. Try both. */
+    static const char *classes[] = { "RTW88PCIDevice", "RTW89PCIDevice" };
 
-    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
-                                                       matching);
+    io_service_t service = MACH_PORT_NULL;
+    for (size_t i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
+        /* IOServiceMatching finds the instantiated C++ IOService object;
+         * IOServiceGetMatchingService consumes the dict reference. */
+        CFMutableDictionaryRef matching = IOServiceMatching(classes[i]);
+        if (!matching) {
+            fprintf(stderr, "rtw88ctl: failed to create matching dict\n");
+            return MACH_PORT_NULL;
+        }
+        service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                              matching);
+        if (service)
+            break;
+    }
     if (!service) {
-        fprintf(stderr, "rtw88ctl: no rtw88 device found "
-                "(is rtw88.kext loaded?)\n");
+        fprintf(stderr, "rtw88ctl: no rtw88/rtw89 device found "
+                "(is rtw88.kext or rtw89.kext loaded?)\n");
         return MACH_PORT_NULL;
     }
 
@@ -358,7 +368,7 @@ static void usage(const char *argv0)
         "  %s status\n"
         "\n"
         "Notes:\n"
-        "  - rtw88.kext must be loaded (OpenCore injection or kextload)\n"
+        "  - rtw88.kext or rtw89.kext must be loaded (OpenCore injection or kextload)\n"
         "  - Works in BaseSystem (Recovery) environment\n"
         "  - Run with sudo if IOServiceOpen fails\n",
         argv0, argv0, argv0, argv0, argv0);

@@ -1840,6 +1840,31 @@ void ieee80211_queue_stopped(struct ieee80211_hw *hw, int queue);
 /* Schedule TX work */
 void ieee80211_schedule_txq(struct ieee80211_hw *hw, struct ieee80211_txq *txq);
 
+/* Implemented in rtw88_compat.c (shared by the rtw88 and rtw89 builds) */
+void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work);
+void ieee80211_queue_delayed_work(struct ieee80211_hw *hw,
+                                  struct delayed_work *dwork,
+                                  unsigned long delay);
+void ieee80211_purge_tx_queue(struct ieee80211_hw *hw,
+                              struct sk_buff_head *skbs);
+void ieee80211_restart_hw(struct ieee80211_hw *hw);
+int  ieee80211_start_tx_ba_session(struct ieee80211_sta *sta, u16 tid,
+                                   u16 timeout);
+void ieee80211_stop_tx_ba_cb_irqsafe(struct ieee80211_vif *vif, const u8 *ra,
+                                     u16 tid);
+void ieee80211_tx_info_clear_status(struct ieee80211_tx_info *info);
+void ieee80211_txq_get_depth(struct ieee80211_txq *txq,
+                             unsigned long *frame_cnt,
+                             unsigned long *byte_cnt);
+int  regulatory_hint(struct wiphy *wiphy, const char *alpha2);
+struct ieee80211_sta *ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
+                                                   const u8 *addr,
+                                                   const u8 *localaddr);
+u8   ieee80211_vif_type_p2p(struct ieee80211_vif *vif);
+int  cfg80211_get_ies_channel_number(const u8 *ie, size_t ielen,
+                                     enum nl80211_band band);
+bool cfg80211_ssid_eq(struct cfg80211_ssid *a, struct cfg80211_ssid *b);
+
 /* Connection events */
 void ieee80211_connection_loss(struct ieee80211_vif *vif);
 void ieee80211_beacon_loss(struct ieee80211_vif *vif);

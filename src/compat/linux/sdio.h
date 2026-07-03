@@ -115,4 +115,7 @@ static inline void sdio_unregister_driver(struct sdio_driver *d) {}
     static void __exit __sdio_driver##_exit(void) \
         { sdio_unregister_driver(&(__sdio_driver)); }
 
+/* identity stub implemented in rtw88_compat.c (SDIO path never runs) */
+unsigned int sdio_align_size(struct sdio_func *func, unsigned int sz);
+
 #endif /* _RTW88_COMPAT_SDIO_H */

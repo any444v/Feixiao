@@ -60,6 +60,9 @@ static inline void eth_random_addr(u8 *addr)
     addr[0] |= 0x02; /* set locally administered bit */
 }
 
+/* Implemented in rtw88_compat.c: randomize addr bytes not fixed by mask */
+void get_random_mask_addr(u8 *buf, const u8 *addr, const u8 *mask);
+
 static inline int ether_addr_equal_masked(const u8 *a, const u8 *b,
                                            const u8 *mask)
 {

@@ -47,6 +47,7 @@ struct workqueue_struct *alloc_workqueue(const char *name, unsigned int flags,
                                           int max_active);
 struct workqueue_struct *alloc_ordered_workqueue(const char *name,
                                                   unsigned int flags);
+struct workqueue_struct *create_singlethread_workqueue(const char *name);
 void destroy_workqueue(struct workqueue_struct *wq);
 
 bool queue_work(struct workqueue_struct *wq, struct work_struct *work);

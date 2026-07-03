@@ -88,7 +88,7 @@ DRIVER_CFLAGS := \
     -DCONFIG_RTW88_8822BU=1 \
     -DCONFIG_RTW88_8822CU=1 \
     -DCONFIG_RTW88_8812AU=1 \
-    -Wno-implicit-function-declaration \
+    -Werror=implicit-function-declaration \
     -Wno-int-conversion \
     -Wno-incompatible-pointer-types \
     -Wno-unused-variable \
@@ -104,7 +104,7 @@ DRIVER89_CFLAGS := \
     -I$(LINUX89_SRC) \
     -DRTW89_MACOS=1 \
     -D__KERNEL__ \
-    -Wno-implicit-function-declaration \
+    -Werror=implicit-function-declaration \
     -Wno-int-conversion \
     -Wno-incompatible-pointer-types \
     -Wno-unused-variable \

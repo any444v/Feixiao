@@ -36,6 +36,8 @@ static inline void setup_timer(struct timer_list *timer,
 int mod_timer(struct timer_list *timer, unsigned long expires);
 int del_timer_sync(struct timer_list *timer);
 int del_timer(struct timer_list *timer);
+/* Linux 6.2+ name; implemented in rtw88_compat.c */
+int timer_delete_sync(struct timer_list *timer);
 
 static inline int timer_pending(const struct timer_list *timer)
 {

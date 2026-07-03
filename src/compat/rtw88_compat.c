@@ -826,7 +826,19 @@ struct ieee80211_hw *wiphy_to_ieee80211_hw(struct wiphy *wiphy)
 
 int cfg80211_get_ies_channel_number(const u8 *ie, size_t ielen,
                                      enum nl80211_band band)
-{ (void)ie; (void)ielen; (void)band; return -1; }
+{
+    const struct element *elem;
+
+    if (band == NL80211_BAND_6GHZ)
+        return -1; /* kext scan MLME extracts 6 GHz channels itself */
+    elem = cfg80211_find_elem(WLAN_EID_DS_PARAMS, ie, (int)ielen);
+    if (elem && elem->datalen >= 1)
+        return elem->data[0];
+    elem = cfg80211_find_elem(WLAN_EID_HT_OPERATION, ie, (int)ielen);
+    if (elem && elem->datalen >= 1)
+        return elem->data[0];
+    return -1;
+}
 
 bool cfg80211_ssid_eq(struct cfg80211_ssid *a, struct cfg80211_ssid *b)
 {
@@ -838,8 +850,15 @@ bool cfg80211_ssid_eq(struct cfg80211_ssid *a, struct cfg80211_ssid *b)
 int regulatory_hint(struct wiphy *wiphy, const char *alpha2)
 { (void)wiphy; (void)alpha2; return 0; }
 
-/* sdio_align_size stub — not needed for PCIe-only build */
-void sdio_align_size(void) {}
+/* identity stub — the kext probes SDIO buses as unsupported, so the SDIO
+ * data path never runs; keep the Linux signature so callers using the
+ * return value stay well-defined */
+struct sdio_func;
+unsigned int sdio_align_size(struct sdio_func *func, unsigned int sz)
+{
+    (void)func;
+    return sz;
+}
 
 /* firmware loading is in rtw88_firmware.c (separate TU, no compat header conflicts) */
 

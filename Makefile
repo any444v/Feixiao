@@ -310,7 +310,7 @@ KEXT_LDFLAGS := \
 # Targets                                                             #
 # ------------------------------------------------------------------ #
 
-.PHONY: all kext kext89 ctl install load unload clean
+.PHONY: all kext kext89 ctl install install89 load load89 unload unload89 clean
 
 all: kext ctl
 
@@ -453,8 +453,6 @@ $(OUT_KEXT)/Contents/MacOS:
 # ------------------------------------------------------------------ #
 
 install: kext ctl
-
-kext89: $(OUT_KEXT89_BIN)
 	@echo "Installing rtw88.kext to /Library/Extensions..."
 	sudo cp -R $(OUT_KEXT) /Library/Extensions/
 	sudo chown -R root:wheel /Library/Extensions/rtw88.kext
@@ -463,13 +461,30 @@ kext89: $(OUT_KEXT89_BIN)
 	sudo install -m 755 $(OUT_CTL) /usr/local/bin/rtw88ctl
 	@echo "Done. Run 'make load' or reboot to activate."
 
+install89: kext89 ctl
+	@echo "Installing rtw89.kext to /Library/Extensions..."
+	sudo cp -R $(OUT_KEXT89) /Library/Extensions/
+	sudo chown -R root:wheel /Library/Extensions/rtw89.kext
+	sudo chmod -R 755 /Library/Extensions/rtw89.kext
+	@echo "Installing rtw88ctl to /usr/local/bin..."
+	sudo install -m 755 $(OUT_CTL) /usr/local/bin/rtw88ctl
+	@echo "Done. Run 'make load89' or reboot to activate."
+
 load:
 	@echo "Loading rtw88.kext (requires SIP kext loading enabled)..."
 	sudo kextutil -v $(OUT_KEXT)
 
+load89:
+	@echo "Loading rtw89.kext (requires SIP kext loading enabled)..."
+	sudo kextutil -v $(OUT_KEXT89)
+
 unload:
 	@echo "Unloading rtw88.kext..."
 	sudo kextunload -b com.rtw88.driver
+
+unload89:
+	@echo "Unloading rtw89.kext..."
+	sudo kextunload -b com.rtw89.driver
 
 clean:
 	rm -rf $(BUILD_DIR)

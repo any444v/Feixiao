@@ -214,4 +214,24 @@ void rtw88_unregister_vif(void);
 void rtw88_register_sta(struct ieee80211_sta *sta);
 void rtw88_unregister_sta(void);
 
+/*
+ * A-MPDU BlockAck hardware setup.
+ *
+ * The kext negotiates ADDBA/DELBA over the air itself, but rtw89 still needs
+ * the per-TID CMAC table (TX) and BA CAM (RX) programmed via H2C or the MAC's
+ * aggregation engine desyncs and stalls the TX DMA ring under sustained load.
+ * These bridge the kext's over-the-air BA handshake to those H2Cs, bypassing
+ * mac80211's ampdu_action op (which dereferences sta->txq[] — never allocated
+ * by this port).  tx_ampdu_start returns 0 on success; the kext only enables
+ * AMPDU descriptor tagging when it does, so a failure degrades to stable
+ * non-aggregated TX rather than a wedged ring.
+ */
+int  rtw88_tx_ampdu_start(struct ieee80211_vif *vif, struct ieee80211_sta *sta,
+                          uint8_t tid, uint16_t agg_num);
+void rtw88_tx_ampdu_stop(struct ieee80211_vif *vif, struct ieee80211_sta *sta,
+                         uint8_t tid);
+int  rtw88_rx_ampdu_start(struct ieee80211_sta *sta, uint8_t tid,
+                          uint16_t ssn, uint16_t buf_size);
+void rtw88_rx_ampdu_stop(struct ieee80211_sta *sta, uint8_t tid);
+
 #endif /* _RTW88_COMPAT_H */

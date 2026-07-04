@@ -2072,6 +2072,17 @@ IOReturn RTW88IEEE80211::cmdConnect(const char *ssid, const char *password)
     strlcpy(_password, password ? password : "", sizeof(_password));
     _wpa2 = (_targetBSS.cipher == WLAN_CIPHER_SUITE_CCMP);
     _authRetries = 0;
+
+    /* Kill any timer still pending from the preceding operation (a scan
+     * timeout, or a prior connect attempt) BEFORE we enter AUTHENTICATING.
+     * doAuthenticate() sleeps ~500 ms settling the firmware before it arms
+     * its own 3 s auth timer; a stale short-deadline timer left over from the
+     * scan would otherwise fire during that window, be misread by onTimer as
+     * an auth timeout, and launch a *second* doAuthenticate() on the workloop
+     * thread concurrently with the one running on the connect thread_call —
+     * two interleaved auth/assoc/EAPOL sequences that wedge the firmware
+     * (c2h reg timeout, RSSI 0). */
+    _timer->cancelTimeout();
     _state = RTW88_STATE_AUTHENTICATING;
 
     /* Run doAuthenticate on a background thread_call so the IOUserClient
@@ -2090,6 +2101,12 @@ void RTW88IEEE80211::connectTCFn(thread_call_param_t self, thread_call_param_t)
 void RTW88IEEE80211::doAuthenticate()
 {
     if (!_hw || !_vif) return;
+
+    /* Cancel any pending timer so no stale timeout fires during the settle
+     * sleep below and re-enters us concurrently (see cmdConnect).  When called
+     * from onTimer's retry path the timer has already fired and this is a
+     * no-op; when called from the connect thread_call it closes the window. */
+    _timer->cancelTimeout();
 
     IOLog("rtw88: doAuthenticate entry — BSSID %02x:%02x:%02x:%02x:%02x:%02x ch=%u\n",
           _targetBSS.bssid[0], _targetBSS.bssid[1], _targetBSS.bssid[2],
@@ -2592,10 +2609,21 @@ void RTW88IEEE80211::doDisconnect()
     body[0] = WLAN_REASON_DEAUTH_LEAVING; body[1] = 0;
     txMgmtFrame(deauth, sizeof(*hdr) + 2);
 
-    /* Notify driver */
+    /* Notify driver of disassociation — split API, mirroring the assoc path
+     * in reverse.  rtw89 dropped bss_info_changed entirely: the firmware join
+     * state is torn down by vif_cfg_changed(BSS_CHANGED_ASSOC) observing
+     * vif->cfg.assoc == false (→ rtw89_station_mode_sta_assoc disassoc path).
+     * The old bss_info_changed call was a no-op under rtw89, so the firmware
+     * kept its stale join/channel context — the *next* connect's first
+     * register-H2C then timed out ("c2h reg timeout"), leaving RSSI 0 and no
+     * traffic.  vif_cfg_changed MUST run before releaseSta() drops the peer
+     * STA, so the disassoc H2C still has a valid mac_id to reference. */
     struct ieee80211_bss_conf *bss = &_vif->bss_conf;
     bss->assoc = false;
-    if (_hw->ops && _hw->ops->bss_info_changed)
+    _vif->cfg.assoc = false;
+    if (_hw->ops && _hw->ops->vif_cfg_changed)
+        _hw->ops->vif_cfg_changed(_hw, _vif, BSS_CHANGED_ASSOC);
+    else if (_hw->ops && _hw->ops->bss_info_changed)
         _hw->ops->bss_info_changed(_hw, _vif, bss, BSS_CHANGED_ASSOC);
     releaseSta();
 
@@ -2888,6 +2916,11 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
         uint16_t bufsz     = (uint16_t)((req_param >> 6) & 0x3ff);
         uint16_t ssn       = (uint16_t)(ssc >> 4);
         rxBaSetup(tid, ssn, bufsz);
+        /* Program the hardware BA CAM so rtw89's MAC reorders/acks the
+         * aggregated downlink; without it HW handling of the RX A-MPDU is
+         * undefined (rtw88 auto-handled RX BA, rtw89 requires this H2C). */
+        if (_sta)
+            rtw88_rx_ampdu_start(_sta, tid, ssn, bufsz);
         sendAddbaResponse(tid, dialog, req_param, ba_to);
         IOLog("rtw88: RX ADDBA request (tid=%u ssn=%u buf=%u) — accepted, "
               "downlink A-MPDU on\n", tid, ssn, bufsz);
@@ -2899,9 +2932,24 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
         uint16_t status = (uint16_t)(b[3] | (b[4] << 8));
         uint16_t param  = (uint16_t)(b[5] | (b[6] << 8));
         uint8_t  tid    = (uint8_t)((param >> 2) & 0xf);
+        uint16_t bufsz  = (uint16_t)((param >> 6) & 0x3ff);
         if (status == 0 && tid == _baTid) {
-            _txBaActive = true;
-            IOLog("rtw88: TX ADDBA accepted (tid=%u) — uplink A-MPDU on\n", tid);
+            /* Program the per-TID CMAC aggregation table BEFORE we start
+             * tagging frames IEEE80211_TX_CTL_AMPDU.  If the H2C fails, leave
+             * aggregation off so TX degrades to stable non-aggregated frames
+             * rather than feeding the AMPDU engine against an unconfigured
+             * CMAC table (which freezes the TX DMA ring under load). */
+            int r = (_sta && _vif)
+                    ? rtw88_tx_ampdu_start(_vif, _sta, tid, bufsz) : -1;
+            if (r == 0) {
+                _txBaActive = true;
+                IOLog("rtw88: TX ADDBA accepted (tid=%u agg=%u) — uplink "
+                      "A-MPDU on\n", tid, bufsz);
+            } else {
+                _txBaActive = false;
+                IOLog("rtw88: TX ADDBA accepted but CMAC H2C failed (%d) — "
+                      "TX stays non-aggregated\n", r);
+            }
         } else {
             IOLog("rtw88: TX ADDBA rejected status=%u tid=%u\n", status, tid);
         }
@@ -2915,10 +2963,16 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
         /* initiator=0: AP is the recipient of the agreement it is tearing down
          * — our uplink TX BA, so stop aggregating.  initiator=1: AP is the
          * originator — its downlink BA, so drop our RX reorder buffer. */
-        if (!initiator && tid == _baTid)
+        if (!initiator && tid == _baTid) {
             _txBaActive = false;
-        if (initiator)
+            if (_sta && _vif)
+                rtw88_tx_ampdu_stop(_vif, _sta, tid);   /* clear CMAC agg */
+        }
+        if (initiator) {
             rxBaTeardown(tid);
+            if (_sta)
+                rtw88_rx_ampdu_stop(_sta, tid);         /* clear BA CAM */
+        }
         IOLog("rtw88: RX DELBA tid=%u initiator=%d\n", tid, initiator);
         break;
     }

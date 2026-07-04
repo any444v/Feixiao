@@ -2312,6 +2312,22 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
         bss->qos   = true;
         bss->bssid = bss->bssid_buf;
         memcpy(bss->bssid_buf, _targetBSS.bssid, ETH_ALEN);
+        /* Beacon parameters — rtw89's beacon tracker divides by both;
+         * zero DTIM = divide-by-zero panic in rtw89_core_bcn_track_assoc.
+         * Beacon interval isn't carried in the assoc response, so use
+         * the common default; DTIM period comes from the TIM IE we
+         * stored with the scan result when present. */
+        bss->beacon_int  = 100;
+        bss->dtim_period = 1;
+        for (uint32_t o = 0; o + 2 <= _targetBSS.ies_len; ) {
+            uint8_t id  = _targetBSS.ies[o];
+            uint8_t len = _targetBSS.ies[o + 1];
+            if (o + 2 + len > _targetBSS.ies_len)
+                break;
+            if (id == 5 /* TIM */ && len >= 2 && _targetBSS.ies[o + 3])
+                bss->dtim_period = _targetBSS.ies[o + 3];
+            o += 2 + len;
+        }
         _vif->cfg.assoc = true;
         _vif->cfg.aid   = aid;
         memcpy(_vif->cfg.ap_addr, _targetBSS.bssid, ETH_ALEN);

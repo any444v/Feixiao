@@ -821,14 +821,24 @@ IOReturn RTW88IEEE80211::start()
      * _hw->priv above. */
     if (_hw) {
         RTW88_STAGE("adding STA interface");
-        _vif = (struct ieee80211_vif *)IOMallocZero(
-            sizeof(struct ieee80211_vif) + 128);
+        /* drv_priv must hold the driver's per-vif struct: rtw_vif for rtw88,
+         * rtw89_vif (multi-KB, links_inst[] array) for rtw89.  Both drivers
+         * publish the exact size in hw->vif_data_size before this point —
+         * a fixed size here under-allocates and the driver writes past the
+         * buffer (heap corruption, panics later in unrelated paths). */
+        _vifAllocSize = sizeof(struct ieee80211_vif) + _hw->vif_data_size;
+        _vif = (struct ieee80211_vif *)IOMallocZero(_vifAllocSize);
         if (_vif) {
             _vif->type = NL80211_IFTYPE_STATION;
             memcpy(_vif->addr, _macAddr, 6);
             /* bss_conf.bssid must never be NULL — iterators dereference it
              * for every RX frame even before association. */
             _vif->bss_conf.bssid = _vif->bss_conf.bssid_buf;
+            /* Non-MLO contract mac80211 normally provides: link 0's conf is
+             * the vif's own bss_conf, valid_links stays 0.  rtw89 derefs
+             * vif->link_conf[0] on every H2C/CAM update; leaving it NULL
+             * forces its nolink fallback path (error spam / stale conf). */
+            _vif->link_conf[0] = &_vif->bss_conf;
             if (_hw->ops && _hw->ops->add_interface)
                 _hw->ops->add_interface(_hw, _vif);
             rtw88_register_vif(_vif);
@@ -876,8 +886,9 @@ void RTW88IEEE80211::stop()
         if (_hw->ops->remove_interface) {
             _hw->ops->remove_interface(_hw, _vif);
         }
-        IOFree(_vif, sizeof(*_vif) + 128);
+        IOFree(_vif, _vifAllocSize ? _vifAllocSize : sizeof(*_vif));
         _vif = nullptr;
+        _vifAllocSize = 0;
     }
 
     if (_pcidev) rtw_pci_remove(_pcidev);
@@ -2169,6 +2180,12 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
             memcpy(_sta->addr, _targetBSS.bssid, ETH_ALEN);
             _sta->aid  = aid;
             _sta->wme  = true;
+            /* Non-MLO contract: link 0 is deflink (valid_links stays 0).
+             * rtw89's link deref helpers read sta->link[link_id], and its
+             * CAM code reads link_sta->addr / link_sta->sta. */
+            _sta->link[0] = &_sta->deflink;
+            _sta->deflink.sta = _sta;
+            memcpy(_sta->deflink.addr, _sta->addr, ETH_ALEN);
 
             /* Populate supported rates so rtw_update_sta_info() builds a
              * non-empty rate-adaptation mask. */

@@ -849,6 +849,12 @@ IOReturn RTW88IEEE80211::start()
             if (_vif) {
                 _vif->type = NL80211_IFTYPE_STATION;
                 memcpy(_vif->addr, _macAddr, 6);
+                /* rtw89's add-iface path snapshots the per-link MAC from
+                 * bss_conf.addr (not vif->addr) into the firmware role and
+                 * address CAM.  Leaving it zeroed makes the hardware filter
+                 * drop every unicast frame addressed to our real MAC —
+                 * broadcast (beacons/scan) still works, auth replies don't. */
+                memcpy(_vif->bss_conf.addr, _macAddr, 6);
                 /* bss_conf.bssid must never be NULL — iterators dereference it
                  * for every RX frame even before association. */
                 _vif->bss_conf.bssid = _vif->bss_conf.bssid_buf;
@@ -2053,6 +2059,7 @@ IOReturn RTW88IEEE80211::cmdConnect(const char *ssid, const char *password)
 
     strlcpy(_password, password ? password : "", sizeof(_password));
     _wpa2 = (_targetBSS.cipher == WLAN_CIPHER_SUITE_CCMP);
+    _authRetries = 0;
     _state = RTW88_STATE_AUTHENTICATING;
 
     /* Run doAuthenticate on a background thread_call so the IOUserClient
@@ -3153,7 +3160,15 @@ void RTW88IEEE80211::onTimer()
         break;
 
     case RTW88_STATE_AUTHENTICATING:
-        IOLog("rtw88: auth timeout, retrying\n");
+        if (++_authRetries >= kMaxAuthRetries) {
+            IOLog("rtw88: auth failed after %u attempts — giving up\n",
+                  _authRetries);
+            _authRetries = 0;
+            _state = RTW88_STATE_IDLE;
+            break;
+        }
+        IOLog("rtw88: auth timeout, retrying (%u/%u)\n",
+              _authRetries, kMaxAuthRetries);
         doAuthenticate();
         break;
 

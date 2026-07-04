@@ -226,6 +226,11 @@ private:
     bool     _rxCcmpIvSkipLogged = false;
     bool     _wpa2     = false;
 
+    /* Auth retry budget — bounded so a dead AP returns the state machine
+     * to IDLE instead of blocking scan/connect forever. */
+    static const uint8_t kMaxAuthRetries = 5;
+    uint8_t  _authRetries = 0;
+
     /* Sequence number for TX frames */
     uint16_t _txSeq    = 0;
     /* Separate SN space for QoS data (TID 0) so the BlockAck window is gap-free */

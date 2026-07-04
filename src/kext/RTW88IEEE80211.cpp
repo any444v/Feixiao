@@ -680,8 +680,20 @@ void RTW88IEEE80211::releaseSta()
     if (!_sta)
         return;
 
-    if (_hw && _hw->ops && _hw->ops->sta_remove && _vif)
-        _hw->ops->sta_remove(_hw, _vif, _sta);
+    rtw88_unregister_sta();
+    if (_hw && _hw->ops && _vif) {
+        if (_hw->ops->sta_state) {
+            /* Reverse of the assoc-time transitions (rtw89). */
+            _hw->ops->sta_state(_hw, _vif, _sta,
+                IEEE80211_STA_ASSOC, IEEE80211_STA_AUTH);
+            _hw->ops->sta_state(_hw, _vif, _sta,
+                IEEE80211_STA_AUTH, IEEE80211_STA_NONE);
+            _hw->ops->sta_state(_hw, _vif, _sta,
+                IEEE80211_STA_NONE, IEEE80211_STA_NOTEXIST);
+        } else if (_hw->ops->sta_remove) {
+            _hw->ops->sta_remove(_hw, _vif, _sta);
+        }
+    }
 
     IOFree(_sta, _staAllocSize ? _staAllocSize : sizeof(struct ieee80211_sta));
     _sta = nullptr;
@@ -2220,7 +2232,8 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
     _assocAID = aid;
 
     /* ----- 1. Allocate and register peer STA ----- */
-    if (_sta == nullptr && _hw->ops && _hw->ops->sta_add) {
+    if (_sta == nullptr && _hw->ops &&
+        (_hw->ops->sta_add || _hw->ops->sta_state)) {
         size_t sta_sz = sizeof(struct ieee80211_sta) + _hw->sta_data_size;
         _sta = (struct ieee80211_sta *)IOMallocZero(sta_sz);
         if (_sta) {
@@ -2266,12 +2279,33 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
                     _sta->deflink.vht_cap = sband->vht_cap;
             }
 
-            _hw->ops->sta_add(_hw, _vif, _sta);
+            if (_hw->ops->sta_state) {
+                /* rtw89 has no sta_add — drive mac80211's sta state
+                 * machine.  NOTEXIST→NONE allocates the peer's mac_id
+                 * and firmware entry; AUTH→ASSOC is a deliberate no-op
+                 * for station vifs (rtw89 defers the real assoc H2C to
+                 * vif_cfg_changed(BSS_CHANGED_ASSOC) below). */
+                int sret = _hw->ops->sta_state(_hw, _vif, _sta,
+                    IEEE80211_STA_NOTEXIST, IEEE80211_STA_NONE);
+                if (sret == 0)
+                    sret = _hw->ops->sta_state(_hw, _vif, _sta,
+                        IEEE80211_STA_NONE, IEEE80211_STA_AUTH);
+                if (sret == 0)
+                    sret = _hw->ops->sta_state(_hw, _vif, _sta,
+                        IEEE80211_STA_AUTH, IEEE80211_STA_ASSOC);
+                if (sret != 0)
+                    IOLog("rtw88: sta_state failed: %d\n", sret);
+            } else {
+                _hw->ops->sta_add(_hw, _vif, _sta);
+            }
+            /* Make ieee80211_find_sta() resolve the peer — rtw89's
+             * assoc path looks the sta up by vif->cfg.ap_addr. */
+            rtw88_register_sta(_sta);
         }
     }
 
     /* ----- 2. Notify driver of full association ----- */
-    if (_hw->ops && _hw->ops->bss_info_changed) {
+    if (_hw->ops) {
         struct ieee80211_bss_conf *bss = &_vif->bss_conf;
         bss->assoc = true;
         bss->aid   = aid;
@@ -2280,8 +2314,19 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
         memcpy(bss->bssid_buf, _targetBSS.bssid, ETH_ALEN);
         _vif->cfg.assoc = true;
         _vif->cfg.aid   = aid;
-        _hw->ops->bss_info_changed(_hw, _vif, bss,
-            BSS_CHANGED_ASSOC | BSS_CHANGED_QOS);
+        memcpy(_vif->cfg.ap_addr, _targetBSS.bssid, ETH_ALEN);
+        if (_hw->ops->vif_cfg_changed || _hw->ops->link_info_changed) {
+            /* rtw89 split API: per-link conf first (BSSID → CAM), then
+             * vif config (ASSOC → sta_assoc H2C + join info). */
+            if (_hw->ops->link_info_changed)
+                _hw->ops->link_info_changed(_hw, _vif, bss,
+                                            BSS_CHANGED_BSSID);
+            if (_hw->ops->vif_cfg_changed)
+                _hw->ops->vif_cfg_changed(_hw, _vif, BSS_CHANGED_ASSOC);
+        } else if (_hw->ops->bss_info_changed) {
+            _hw->ops->bss_info_changed(_hw, _vif, bss,
+                BSS_CHANGED_ASSOC | BSS_CHANGED_QOS);
+        }
     }
 
     if (_wpa2) {

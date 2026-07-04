@@ -380,9 +380,12 @@ thread_call_t g_irq_thread_call = NULL;
  * ieee80211_iterate_active_interfaces_atomic can deliver the iterator to
  * rtw88's internal callbacks (e.g. rtw_build_rsvd_page_iter). */
 static struct ieee80211_vif *g_rtw88_vif = NULL;
+static struct ieee80211_sta *g_rtw88_sta = NULL;
 
 void rtw88_register_vif(struct ieee80211_vif *vif)   { g_rtw88_vif = vif; }
 void rtw88_unregister_vif(void)                       { g_rtw88_vif = NULL; }
+void rtw88_register_sta(struct ieee80211_sta *sta)   { g_rtw88_sta = sta; }
+void rtw88_unregister_sta(void)                       { g_rtw88_sta = NULL; }
 
 /* Kext-registered hook fired after the IRQ bottom-half (tx_isr) has run and
  * freed TX descriptors.  Runs on the thread_call thread with no rtw88 locks
@@ -747,14 +750,29 @@ void ieee80211_queue_delayed_work(struct ieee80211_hw *hw,
 /*  mac80211 stubs                                                      */
 /* ------------------------------------------------------------------ */
 
+/* Single-STA setup: the kext registers the peer via rtw88_register_sta()
+ * after association.  rtw89's assoc path resolves the peer with
+ * ieee80211_find_sta(vif, vif->cfg.ap_addr). */
 struct ieee80211_sta *ieee80211_find_sta(struct ieee80211_vif *vif,
                                           const u8 *addr)
-{ (void)vif; (void)addr; return NULL; }
+{
+    (void)vif;
+    if (g_rtw88_sta && addr &&
+        memcmp(g_rtw88_sta->addr, addr, ETH_ALEN) == 0)
+        return g_rtw88_sta;
+    return NULL;
+}
 
 struct ieee80211_sta *ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
                                                     const u8 *addr,
                                                     const u8 *localaddr)
-{ (void)hw; (void)addr; (void)localaddr; return NULL; }
+{
+    (void)hw; (void)localaddr;
+    if (g_rtw88_sta && addr &&
+        memcmp(g_rtw88_sta->addr, addr, ETH_ALEN) == 0)
+        return g_rtw88_sta;
+    return NULL;
+}
 
 struct sk_buff *ieee80211_proberesp_get(struct ieee80211_hw *hw,
                                          struct ieee80211_vif *vif)
@@ -951,6 +969,7 @@ void rtw88_compat_exit(void)
     g_hw_cbs        = NULL;
     g_kext_hw       = NULL;
     g_rtw88_vif     = NULL;
+    g_rtw88_sta     = NULL;
     if (rtw88_log_lock) {
         IOSimpleLockFree(rtw88_log_lock);
         rtw88_log_lock = NULL;

@@ -820,40 +820,57 @@ IOReturn RTW88IEEE80211::start()
      * NOTE: _rtwdev must NOT be reassigned here. It has been correctly set from
      * _hw->priv above. */
     if (_hw) {
-        RTW88_STAGE("adding STA interface");
-        /* drv_priv must hold the driver's per-vif struct: rtw_vif for rtw88,
-         * rtw89_vif (multi-KB, links_inst[] array) for rtw89.  Both drivers
-         * publish the exact size in hw->vif_data_size before this point —
-         * a fixed size here under-allocates and the driver writes past the
-         * buffer (heap corruption, panics later in unrelated paths). */
-        _vifAllocSize = sizeof(struct ieee80211_vif) + _hw->vif_data_size;
-        _vif = (struct ieee80211_vif *)IOMallocZero(_vifAllocSize);
-        if (_vif) {
-            _vif->type = NL80211_IFTYPE_STATION;
-            memcpy(_vif->addr, _macAddr, 6);
-            /* bss_conf.bssid must never be NULL — iterators dereference it
-             * for every RX frame even before association. */
-            _vif->bss_conf.bssid = _vif->bss_conf.bssid_buf;
-            /* Non-MLO contract mac80211 normally provides: link 0's conf is
-             * the vif's own bss_conf, valid_links stays 0.  rtw89 derefs
-             * vif->link_conf[0] on every H2C/CAM update; leaving it NULL
-             * forces its nolink fallback path (error spam / stale conf). */
-            _vif->link_conf[0] = &_vif->bss_conf;
-            if (_hw->ops && _hw->ops->add_interface)
-                _hw->ops->add_interface(_hw, _vif);
-            rtw88_register_vif(_vif);
-        }
-        RTW88_STAGE("add_interface done");
-
+        /* mac80211 order is drv_start THEN drv_add_interface.  rtw89's
+         * add_interface sends H2C commands to firmware that ops->start
+         * only just downloads (rtw88 tolerated the reversed order because
+         * its add_interface is pure register writes).  With the order
+         * flipped, add_interface fails, silently unsets the vif's link,
+         * and every later scan/tx dies with "find no designated link". */
         RTW88_STAGE("calling hw->ops->start");
         if (_hw->ops && _hw->ops->start) {
-            int ret = _hw->ops->start(_hw);
-            RTW88_STAGE("hw->ops->start returned %d", ret);
-            if (ret != 0) {
-                IOLog("rtw88: hw->ops->start failed: %d\n", ret);
+            int sret = _hw->ops->start(_hw);
+            RTW88_STAGE("hw->ops->start returned %d", sret);
+            if (sret != 0) {
+                IOLog("rtw88: hw->ops->start failed: %d\n", sret);
             } else {
                 _powered = true;
             }
+        }
+
+        if (_powered) {
+            RTW88_STAGE("adding STA interface");
+            /* drv_priv must hold the driver's per-vif struct: rtw_vif for rtw88,
+             * rtw89_vif (multi-KB, links_inst[] array) for rtw89.  Both drivers
+             * publish the exact size in hw->vif_data_size before this point —
+             * a fixed size here under-allocates and the driver writes past the
+             * buffer (heap corruption, panics later in unrelated paths). */
+            _vifAllocSize = sizeof(struct ieee80211_vif) + _hw->vif_data_size;
+            _vif = (struct ieee80211_vif *)IOMallocZero(_vifAllocSize);
+            if (_vif) {
+                _vif->type = NL80211_IFTYPE_STATION;
+                memcpy(_vif->addr, _macAddr, 6);
+                /* bss_conf.bssid must never be NULL — iterators dereference it
+                 * for every RX frame even before association. */
+                _vif->bss_conf.bssid = _vif->bss_conf.bssid_buf;
+                /* Non-MLO contract mac80211 normally provides: link 0's conf is
+                 * the vif's own bss_conf, valid_links stays 0.  rtw89 derefs
+                 * vif->link_conf[0] on every H2C/CAM update; leaving it NULL
+                 * forces its nolink fallback path (error spam / stale conf). */
+                _vif->link_conf[0] = &_vif->bss_conf;
+                int aret = -1;
+                if (_hw->ops && _hw->ops->add_interface)
+                    aret = _hw->ops->add_interface(_hw, _vif);
+                if (aret == 0) {
+                    _ifaceAdded = true;
+                    rtw88_register_vif(_vif);
+                } else {
+                    IOLog("rtw88: add_interface failed: %d\n", aret);
+                    IOFree(_vif, _vifAllocSize);
+                    _vif = nullptr;
+                    _vifAllocSize = 0;
+                }
+            }
+            RTW88_STAGE("add_interface done");
         }
     }
 
@@ -878,17 +895,21 @@ void RTW88IEEE80211::stop()
     }
 
     if (_vif && _hw && _hw->ops) {
-        if (_powered && _hw->ops->stop) {
-            _hw->ops->stop(_hw, false);
-            _powered = false;
-        }
-        rtw88_unregister_vif();
-        if (_hw->ops->remove_interface) {
-            _hw->ops->remove_interface(_hw, _vif);
+        /* mac80211 removes interfaces BEFORE drv_stop — rtw89's remove
+         * path sends H2C teardown to the firmware that ops->stop kills. */
+        if (_ifaceAdded) {
+            rtw88_unregister_vif();
+            if (_hw->ops->remove_interface)
+                _hw->ops->remove_interface(_hw, _vif);
+            _ifaceAdded = false;
         }
         IOFree(_vif, _vifAllocSize ? _vifAllocSize : sizeof(*_vif));
         _vif = nullptr;
         _vifAllocSize = 0;
+    }
+    if (_hw && _hw->ops && _powered && _hw->ops->stop) {
+        _hw->ops->stop(_hw, false);
+        _powered = false;
     }
 
     if (_pcidev) rtw_pci_remove(_pcidev);
@@ -913,6 +934,18 @@ IOReturn RTW88IEEE80211::powerOn()
         return kIOReturnError;
     }
     _powered = true;
+    /* ops->start re-downloads firmware, so the interface's firmware role
+     * is gone — re-create it, same as mac80211's resume reconfig which
+     * replays drv_add_interface after drv_start. */
+    if (_vif && !_ifaceAdded && _hw->ops->add_interface) {
+        int aret = _hw->ops->add_interface(_hw, _vif);
+        if (aret == 0) {
+            _ifaceAdded = true;
+            rtw88_register_vif(_vif);
+        } else {
+            IOLog("rtw88: add_interface failed after powerOn: %d\n", aret);
+        }
+    }
     return kIOReturnSuccess;
 }
 
@@ -920,6 +953,14 @@ void RTW88IEEE80211::powerOff()
 {
     IOLog("rtw88: IEEE80211 powerOff\n");
     if (!_powered) return;
+    /* Remove the interface first (mac80211 order); its firmware role dies
+     * with ops->stop anyway, and powerOn re-adds it cleanly. */
+    if (_hw && _hw->ops && _vif && _ifaceAdded) {
+        rtw88_unregister_vif();
+        if (_hw->ops->remove_interface)
+            _hw->ops->remove_interface(_hw, _vif);
+        _ifaceAdded = false;
+    }
     if (_hw && _hw->ops && _hw->ops->stop)
         _hw->ops->stop(_hw, false);
     _powered = false;

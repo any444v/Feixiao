@@ -3099,11 +3099,15 @@ bool RTW88IEEE80211::txDataFrame(mbuf_t m)
     uint16_t ethertype = (uint16_t)((eh[12] << 8) | eh[13]);
     bool protected_frame = _wpa2 && _ptkConf && ethertype != ETH_P_PAE;
 
-    /* Use a QoS Data frame (24-byte header + 2-byte QoS Control) when HT is in
-     * use — A-MPDU/BlockAck is strictly per-TID and a plain Data frame carries
-     * no TID.  TKIP links (where HT is disallowed) fall back to a plain non-QoS
-     * Data frame, the proven legacy path. */
-    bool qos = htAllowed();
+    /* Use a QoS Data frame (24-byte header + 2-byte QoS Control) only when
+     * aggregation is actually enabled — A-MPDU/BlockAck is strictly per-TID and
+     * needs the TID a QoS header carries.  With aggregation disabled the TID
+     * buys nothing, and feeding the firmware QoS/TID data with no BlockAck
+     * agreement appears to wedge its TX scheduler (H2C consumption stops ~24s
+     * in, on the first real data traffic, with no firmware assert).  Fall back
+     * to the plain non-QoS Data frame — the proven legacy path also used for
+     * TKIP links. */
+    bool qos = kEnableAmpdu && htAllowed();
     uint32_t hlen = qos ? 26 : 24;
     uint32_t framelen = hlen + (protected_frame ? 8 : 0) + 8 + paylen;
     struct sk_buff *skb = alloc_skb(framelen + 128, GFP_ATOMIC);

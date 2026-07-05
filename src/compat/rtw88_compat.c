@@ -452,12 +452,27 @@ static void rtw88_napi_thread_wrapper(thread_call_param_t param0, thread_call_pa
 {
     struct napi_struct *napi = (struct napi_struct *)param0;
     if (napi && napi->poll) {
-        int work = napi->poll(napi, napi->weight);
-        if (work >= napi->weight) {
-            if (napi->thread_call) {
-                thread_call_enter((thread_call_t)napi->thread_call);
-            }
-        }
+        /* Drain in a bounded loop rather than relying on a thread_call self-
+         * reschedule.  rtw89_pci_napi_poll() re-arms the PCI interrupt itself
+         * ONLY on the completing poll (return value < weight); when it returns
+         * >= weight there is still RPQ/RXQ work pending and the interrupt stays
+         * masked.  On Linux the NAPI core reschedules the poll; here we must
+         * loop, or a single budget-exhausting RX/RPQ burst leaves interrupts
+         * masked forever -> RX delivery and RX-buffer replenishment stop -> the
+         * firmware RX ring starves and the MAC wedges with no assert (observed:
+         * RX bytes freeze right after assoc, then CH12 fwcmd ring fills ~27s
+         * later and never recovers).  Bound the loop so a sustained flood cannot
+         * monopolize the thread_call worker. */
+        int iters = 0;
+        int work;
+        do {
+            work = napi->poll(napi, napi->weight);
+        } while (work >= napi->weight && ++iters < 64);
+
+        /* Still pending after the bounded drain: hand back to the thread_call
+         * so the worker re-enters us instead of us spinning here. */
+        if (work >= napi->weight && napi->thread_call)
+            thread_call_enter((thread_call_t)napi->thread_call);
     }
 }
 

@@ -2891,8 +2891,26 @@ bool RTW88IEEE80211::htAllowed() const
     return true;
 }
 
+/*
+ * A-MPDU master switch.
+ *
+ * Aggregation is DISABLED for now.  With the rtw89 CMAC/BA-CAM H2Cs wired up
+ * the hardware A-MPDU datapath is genuinely exercised even by light traffic,
+ * and on this port it does not work: TX aggregation stalls the fwcmd ring
+ * ("no tx fwcmd resource") and RX aggregation desyncs the RX reassembly state
+ * machine ("desc info should not be ready before first segment start"), so
+ * DHCP never completes.  Non-aggregated TX/RX is the known-good path (it
+ * carried working DHCP + internet on first connect) and also sidesteps the
+ * under-load TX halt entirely, since the AMPDU engine is never engaged.
+ *
+ * Flip to true to re-enable and continue debugging the aggregated datapath on
+ * real hardware; all the BA-setup plumbing below remains in place.
+ */
+static const bool kEnableAmpdu = false;
+
 void RTW88IEEE80211::startTxAggregation()
 {
+    if (!kEnableAmpdu) return;
     if (_txBaActive) return;
     if (!htAllowed()) return;
     if (!_sta || !_sta->deflink.ht_cap.ht_supported) return;
@@ -2917,9 +2935,11 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
         uint16_t ssn       = (uint16_t)(ssc >> 4);
         rxBaSetup(tid, ssn, bufsz);
         /* Program the hardware BA CAM so rtw89's MAC reorders/acks the
-         * aggregated downlink; without it HW handling of the RX A-MPDU is
-         * undefined (rtw88 auto-handled RX BA, rtw89 requires this H2C). */
-        if (_sta)
+         * aggregated downlink.  Gated off with the master switch: when
+         * aggregation is disabled we still ACK the ADDBA (the AP may
+         * aggregate regardless) but let the frames be delivered
+         * unreordered, which is the known-good path on this port. */
+        if (kEnableAmpdu && _sta)
             rtw88_rx_ampdu_start(_sta, tid, ssn, bufsz);
         sendAddbaResponse(tid, dialog, req_param, ba_to);
         IOLog("rtw88: RX ADDBA request (tid=%u ssn=%u buf=%u) — accepted, "
@@ -2933,7 +2953,7 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
         uint16_t param  = (uint16_t)(b[5] | (b[6] << 8));
         uint8_t  tid    = (uint8_t)((param >> 2) & 0xf);
         uint16_t bufsz  = (uint16_t)((param >> 6) & 0x3ff);
-        if (status == 0 && tid == _baTid) {
+        if (kEnableAmpdu && status == 0 && tid == _baTid) {
             /* Program the per-TID CMAC aggregation table BEFORE we start
              * tagging frames IEEE80211_TX_CTL_AMPDU.  If the H2C fails, leave
              * aggregation off so TX degrades to stable non-aggregated frames
@@ -2965,12 +2985,12 @@ void RTW88IEEE80211::handleBackAction(const uint8_t *b, uint32_t len)
          * originator — its downlink BA, so drop our RX reorder buffer. */
         if (!initiator && tid == _baTid) {
             _txBaActive = false;
-            if (_sta && _vif)
+            if (kEnableAmpdu && _sta && _vif)
                 rtw88_tx_ampdu_stop(_vif, _sta, tid);   /* clear CMAC agg */
         }
         if (initiator) {
             rxBaTeardown(tid);
-            if (_sta)
+            if (kEnableAmpdu && _sta)
                 rtw88_rx_ampdu_stop(_sta, tid);         /* clear BA CAM */
         }
         IOLog("rtw88: RX DELBA tid=%u initiator=%d\n", tid, initiator);
